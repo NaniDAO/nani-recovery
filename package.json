@@ -10,13 +10,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "viem": "^2.55.11"
+    "viem": "2.55.11"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
-    "vite": "^8.2.1",
-    "vite-plugin-singlefile": "^2.3.3",
-    "vitest": "^4.1.10"
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vite-plugin-singlefile": "2.3.3",
+    "vitest": "4.1.10"
   },
   "packageManager": "pnpm@10.20.0"
 }
