@@ -32,6 +32,7 @@ import {
   ETH_RESERVE, findHoldings, findNFTs, formatHolding, formatNFT,
   type Holding, type NFT,
 } from './lib/assets';
+import { findPending, type PendingRecovery } from './lib/pending';
 import {
   describeWait,
   describeWhen,
@@ -65,6 +66,7 @@ let holdings: Holding[] = [];
 let selected = new Set<string>();
 let manualTokens: Address[] = [];
 let nfts: NFT[] = [];
+let pending: PendingRecovery[] = [];
 let selectedNFTs = new Set<string>();
 let guardian: Address | null = null;
 let guardianProvider: Provider | null = null;
@@ -154,6 +156,42 @@ $<HTMLButtonElement>('look-up').addEventListener('click', async () => {
     readout.classList.remove('is-hidden');
     markDone('1');
     unlock('2');
+
+    // What the chain says is already queued against this account, whoever
+    // started it. Local storage only knows about recoveries begun in this
+    // browser, which is no help to a guardian on a second machine — or to an
+    // account holder checking whether anyone has queued something against them.
+    pending = await findPending(client, chain, account);
+    if (pending.length > 0) {
+      const rows = pending.map((entry) =>
+        `<li><strong>${escape(describeWait(entry.eta))}</strong> — ${escape(describeWhen(entry.eta))}` +
+        (entry.verified ? '' : ' <em>(payload could not be verified)</em>') +
+        `</li>`).join('');
+      readout.insertAdjacentHTML('beforeend',
+        `<div class="banner banner--warn"><strong>${pending.length === 1
+          ? 'A recovery is already queued against this account.'
+          : `${pending.length} recoveries are already queued against this account.`}</strong>
+         <ul class="pending-list">${rows}</ul>
+         You can finish it at the bottom of this page once its wait is over. If you did not start it, whoever holds this account's key can cancel it from the wallet.</div>`);
+      for (const entry of pending) {
+        if (!entry.data || !entry.verified) continue;
+        // Adopt it as a local ticket so the existing finish path can run it.
+        // Only when the payload verifies: `executeQueued` needs the exact
+        // arguments, and an unverified payload would revert.
+        saveTicket({
+          version: TICKET_VERSION,
+          chainId: chain.id,
+          account,
+          data: entry.data,
+          nonce: entry.nonce,
+          destination: account,
+          hash: entry.hash,
+          eta: entry.eta,
+          createdAt: Math.floor(Date.now() / 1000),
+        });
+      }
+      void refreshTicketState();
+    }
   } catch (e) {
     error.textContent = `Couldn't read that account: ${(e as Error).message}`;
   }

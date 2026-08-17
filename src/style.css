@@ -363,6 +363,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .ticket__wait.is-ready { color: var(--accent); }
 
+.pending-list {
+  margin: 8px 0 8px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
 .ticket__when {
   display: block;
   font-size: 12px;

@@ -55,6 +55,24 @@ EIP-7702 is still an EOA, and whoever holds that key can sign ordinary
 transactions from it no matter who owns the multisig. Owner rotation only
 governs `execute`.
 
+## Seeing what's already queued
+
+Looking an account up also asks the chain what is queued against it, not just
+what this browser remembers. Local storage only knows about recoveries begun
+here, which is no help to a guardian who started one on a laptop and came back
+on a phone.
+
+It cuts the other way too: an account holder can put their own address in and
+see whether anyone has queued anything against them. `cancelQueued` is
+`onlySelf`, so the answer to an unwanted one is in the wallet, not here.
+
+The `Queued` event carries no payload, so what a queued recovery *does* is
+recovered from the transaction that queued it and the digest re-derived. A
+payload that doesn't hash to the queued entry is shown as unverified rather than
+rendered as fact, and is not adopted as something this page offers to run —
+`executeQueued` needs the exact arguments, so an unverified payload would only
+revert.
+
 ## The waiting period
 
 If the account has one — and it should — `execute` **queues** rather than runs.
