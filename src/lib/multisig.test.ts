@@ -1,3 +1,4 @@
+import { hashTypedData } from 'viem';
 import { describe, expect, test } from 'vitest';
 import {
   IMPLEMENTATION,
@@ -61,18 +62,40 @@ describe('digest', () => {
   /// The wallet renders this, and the contract verifies the hash above. If the
   /// two ever described different transactions, the guardian would be approving
   /// one thing and signing another.
-  test('typed data describes the same transaction as the digest', () => {
+  ///
+  /// Field-by-field correspondence used to be the whole check, and it could not
+  /// have caught the failure that matters: `value` serialised wrongly still
+  /// yields a valid signature, over a digest the contract has never heard of.
+  /// Hashing the payload the wallet is handed and comparing it to the digest
+  /// built from the typehash is the only version of this test with teeth.
+  test('typed data hashes to the same digest the contract checks', () => {
     const params = {
       account: ACCOUNT as `0x${string}`, chainId: 1, target: TARGET as `0x${string}`,
       value: 5n, data: '0xabcdef' as `0x${string}`, nonce: 3,
     };
-    const typed = typedData(params);
-    expect(typed.domain.verifyingContract).toBe(params.account);
-    expect(typed.domain.chainId).toBe(params.chainId);
-    expect(typed.message.target).toBe(params.target);
-    expect(typed.message.value).toBe('5');
-    expect(typed.message.data).toBe(params.data);
-    expect(typed.message.nonce).toBe(params.nonce);
+    expect(hashTypedData(typedData(params))).toBe(transactionHash(params));
+  });
+
+  test('agrees with the digest across values, nonces and chains', () => {
+    const cases = [
+      { chainId: 1, value: 0n, data: '0x' as `0x${string}`, nonce: 0 },
+      { chainId: 8453, value: 10n ** 21n, data: '0xdeadbeef' as `0x${string}`, nonce: 4_294_967_295 },
+      { chainId: 42161, value: 1n, data: ('0x' + 'ab'.repeat(500)) as `0x${string}`, nonce: 7 },
+    ];
+    for (const c of cases) {
+      const params = { account: ACCOUNT as `0x${string}`, target: TARGET as `0x${string}`, ...c };
+      expect(hashTypedData(typedData(params))).toBe(transactionHash(params));
+    }
+  });
+
+  test('still describes the fields a guardian reads before approving', () => {
+    const typed = typedData({
+      account: ACCOUNT, chainId: 1, target: TARGET, value: 5n, data: '0xabcdef', nonce: 3,
+    });
+    expect(typed.domain.verifyingContract).toBe(ACCOUNT);
+    expect(typed.domain.chainId).toBe(1);
+    expect(typed.message.target).toBe(TARGET);
+    expect(typed.primaryType).toBe('Execute');
   });
 });
 

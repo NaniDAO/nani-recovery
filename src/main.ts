@@ -1,14 +1,20 @@
 import './style.css';
 import {
   createPublicClient,
+  createWalletClient,
+  custom,
   formatEther,
   getAddress,
   http,
   isAddress,
+  UserRejectedRequestError,
   type Address,
+  type Chain as ViemChain,
   type Hex,
   type PublicClient,
+  type WalletClient,
 } from 'viem';
+import { arbitrum, base, mainnet, optimism } from 'viem/chains';
 import {
   CHAINS,
   batchCalldata,
@@ -69,11 +75,32 @@ let nfts: NFT[] = [];
 let pending: PendingRecovery[] = [];
 let selectedNFTs = new Set<string>();
 let guardian: Address | null = null;
-let guardianProvider: Provider | null = null;
+/**
+ * The guardian's wallet, through viem.
+ *
+ * EIP-6963 discovery below stays raw — it is a browser event handshake, not
+ * something viem models — but everything after "we have a provider" goes
+ * through a WalletClient. Hand-rolled `provider.request` calls meant
+ * hand-serialising typed data, string-matching errors, and reimplementing the
+ * chain check; all three are solved problems and none of them were ours to
+ * solve.
+ */
+let guardianWallet: WalletClient | null = null;
 let prepared: { calls: Call[]; data: Hex; hash: Hex; nonce: number; destination: Address } | null = null;
 
 const key = (h: Holding) => h.token ?? 'eth';
 const nftKey = (n: NFT) => `${n.collection}:${n.tokenId}`;
+
+/**
+ * viem's own chain objects, for the wallet side.
+ *
+ * The local `Chain` list carries an RPC and an explorer for reads; viem wants
+ * the full definition so `sendTransaction` can check the wallet is where it
+ * thinks it is, and `switchChain` can name the chain it is asking for.
+ */
+const VIEM_CHAINS: Record<number, ViemChain> = {
+  1: mainnet, 8453: base, 42161: arbitrum, 10: optimism,
+};
 
 function readClient(target: Chain): PublicClient {
   return createPublicClient({ transport: http(target.rpc) });
@@ -249,10 +276,11 @@ async function connect(option: WalletOption) {
   $<HTMLElement>('wallet-picker').classList.add('is-hidden');
 
   try {
-    const accounts = (await option.provider.request({ method: 'eth_requestAccounts' })) as string[];
+    const wallet = createWalletClient({ transport: custom(option.provider) });
+    const accounts = await wallet.requestAddresses();
     if (!accounts?.[0]) throw new Error('No account available.');
     guardian = getAddress(accounts[0]);
-    guardianProvider = option.provider;
+    guardianWallet = wallet;
 
     const isOwner = vault?.owners.some((o) => o.toLowerCase() === guardian!.toLowerCase()) ?? false;
     if (!isOwner) {
@@ -264,7 +292,7 @@ async function connect(option: WalletOption) {
       return;
     }
 
-    const walletChain = Number((await option.provider.request({ method: 'eth_chainId' })) as Hex);
+    const walletChain = await wallet.getChainId();
     state.innerHTML = walletChain === chain.id
       ? `<span class="banner banner--good">Connected as ${escape(guardian)} — an owner of this account.</span>`
       : `<span class="banner banner--warn">Connected as ${escape(guardian)}, an owner — but your wallet is on chain ${walletChain} and this account is on ${escape(chain.name)}. Switch networks before submitting.</span>`;
@@ -528,7 +556,7 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
   const error = $<HTMLElement>('submit-error');
   const state = $<HTMLElement>('submit-state');
   error.textContent = '';
-  if (!prepared || !account || !vault || !guardian || !guardianProvider || !client) return;
+  if (!prepared || !account || !vault || !guardian || !guardianWallet || !client) return;
 
   const button = $<HTMLButtonElement>('submit');
   button.disabled = true;
@@ -538,34 +566,30 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
     // their own wallet independently says it is signing.
     if (!signed || signed.data !== prepared.data || signed.nonce !== prepared.nonce) {
       state.textContent = 'Step 1 of 2 — approve the signature in your wallet. It may open in a separate window.';
-      const signature = (await guardianProvider.request({
-        method: 'eth_signTypedData_v4',
-        params: [guardian, JSON.stringify(typedData({
+      const signature = await guardianWallet.signTypedData({
+        account: guardian,
+        ...typedData({
           account, chainId: chain.id, target: account,
           value: 0n, data: prepared.data, nonce: prepared.nonce,
-        }))],
-      })) as Hex;
+        }),
+      });
       signed = { signature, data: prepared.data, nonce: prepared.nonce };
     }
 
     // Checked here rather than left to the send. A wallet on the wrong chain
     // fails somewhere inside `eth_sendTransaction`, and what surfaces is a
     // generic rejection that says nothing about chains.
-    const walletChain = Number((await guardianProvider.request({ method: 'eth_chainId' })) as Hex);
-    if (walletChain !== chain.id) {
+    if ((await guardianWallet.getChainId()) !== chain.id) {
       state.textContent = `Your wallet is on the wrong network — approve the switch to ${chain.name}.`;
-      await guardianProvider.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${chain.id.toString(16)}` }],
-      });
+      await guardianWallet.switchChain({ id: chain.id });
     }
 
     state.textContent = 'Step 2 of 2 — signed. Now approve the transaction itself. This is a second, separate prompt.';
     const calldata = executeCalldata(account, prepared.data, signed.signature);
-    const txHash = (await guardianProvider.request({
-      method: 'eth_sendTransaction',
-      params: [{ from: guardian, to: account, data: calldata, value: '0x0' }],
-    })) as Hex;
+    const txHash = await guardianWallet.sendTransaction({
+      account: guardian, to: account, data: calldata, value: 0n,
+      chain: VIEM_CHAINS[chain.id] ?? null,
+    });
     state.textContent = '';
 
     const eta = vault.delaySeconds > 0
@@ -598,7 +622,9 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
     step('done').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
     state.textContent = '';
-    const message = (e as Error)?.message ?? String(e);
+    const message = e instanceof UserRejectedRequestError
+      ? 'You declined the request in your wallet.'
+      : ((e as Error)?.message ?? String(e));
     if (signed) {
       // Naming which of the two steps failed, because "User rejected the
       // request" after approving a signature reads as the wallet lying.
@@ -735,19 +761,26 @@ async function finishTicket(ticket: RecoveryTicket) {
       return;
     }
 
-    if (!guardianProvider || !guardian) {
+    if (!guardianWallet || !guardian) {
       error.textContent = 'Connect a wallet first — someone has to send this transaction and pay its gas.';
       return;
+    }
+
+    // A ticket carries its own chain, which need not be the one selected above
+    // — someone finishing a recovery days later may have come back to a
+    // different chain in the picker.
+    if ((await guardianWallet.getChainId()) !== ticket.chainId) {
+      await guardianWallet.switchChain({ id: ticket.chainId });
     }
 
     // No signature this time. `executeQueued` checks only that the hash is
     // queued and its time has passed, so anyone can call it — the arguments
     // are the authorisation, which is why they must match byte for byte.
     const calldata = executeQueuedCalldata(ticket.account, ticket.data, ticket.nonce);
-    const txHash = (await guardianProvider.request({
-      method: 'eth_sendTransaction',
-      params: [{ from: guardian, to: ticket.account, data: calldata, value: '0x0' }],
-    })) as Hex;
+    const txHash = await guardianWallet.sendTransaction({
+      account: guardian, to: ticket.account, data: calldata, value: 0n,
+      chain: VIEM_CHAINS[ticket.chainId] ?? null,
+    });
 
     forgetTicket(ticket.hash);
     renderTickets();

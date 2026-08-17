@@ -304,18 +304,27 @@ export function transactionHash(params: {
   return keccak256(concatHex(['0x1901', domainSeparator(params.account, params.chainId), structHash]));
 }
 
-/** EIP-712 payload for `eth_signTypedData_v4`, so the wallet renders the fields itself. */
+/**
+ * EIP-712 payload for the wallet to render, in the shape viem's `signTypedData`
+ * expects — native bigint for `value`, and no `EIP712Domain` entry, which viem
+ * derives from the domain.
+ *
+ * Previously this was hand-serialised for a raw `eth_signTypedData_v4` call:
+ * `value.toString()`, and `EIP712Domain` written out by hand. Both were our
+ * transcription of a rule rather than the rule, and a wrong transcription here
+ * does not fail — it produces a perfectly valid signature over a digest the
+ * contract has never heard of.
+ *
+ * `transactionHash` below builds the digest independently, from the typehash,
+ * matching the contract. These two descriptions of the same struct have to
+ * agree, and nothing used to check that they did. `hashTypedData(typedData(p))
+ * === transactionHash(p)` is now a test.
+ */
 export function typedData(params: {
   account: Address; chainId: number; target: Address; value: bigint; data: Hex; nonce: number;
 }) {
   return {
     types: {
-      EIP712Domain: [
-        { name: 'name', type: 'string' },
-        { name: 'version', type: 'string' },
-        { name: 'chainId', type: 'uint256' },
-        { name: 'verifyingContract', type: 'address' },
-      ],
       Execute: [
         { name: 'target', type: 'address' },
         { name: 'value', type: 'uint256' },
@@ -332,9 +341,9 @@ export function typedData(params: {
     },
     message: {
       target: params.target,
-      value: params.value.toString(),
+      value: params.value,
       data: params.data,
       nonce: params.nonce,
     },
-  };
+  } as const;
 }
