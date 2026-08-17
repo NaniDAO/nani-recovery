@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recover a nani account</title>
+    <meta
+      name="description"
+      content="Move funds out of a nani account you can no longer sign for, using a guardian address."
+    />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <p class="eyebrow">nani</p>
+        <h1>Recover an account</h1>
+        <p class="lede">
+          If you set a guardian on a nani account and can no longer sign for it, the guardian can
+          move everything out from here. You need the guardian's wallet and nothing else — not the
+          Mac, not the recovery phrase.
+        </p>
+      </header>
+
+      <!-- 1 ------------------------------------------------------------- -->
+      <section class="step" data-step="1">
+        <h2><span class="step__num">1</span> The account you lost</h2>
+        <div class="field">
+          <label for="account">Its address</label>
+          <input id="account" placeholder="0x…" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="chain">Chain</label>
+          <select id="chain"></select>
+          <p class="hint">
+            Guardians are set per chain. If you set one on more than one chain, recover each
+            separately.
+          </p>
+        </div>
+        <button class="button button--primary" id="look-up">Look it up</button>
+        <p class="error" id="lookup-error" role="alert"></p>
+        <div class="readout is-hidden" id="account-readout"></div>
+      </section>
+
+      <!-- 2 ------------------------------------------------------------- -->
+      <section class="step is-locked" data-step="2">
+        <h2><span class="step__num">2</span> Connect the guardian</h2>
+        <p class="hint">
+          The wallet you connect must be an owner of that account. Its signature is what authorises
+          the recovery, and it pays the gas.
+        </p>
+        <button class="button" id="connect">Connect wallet</button>
+        <div class="picker is-hidden" id="wallet-picker"></div>
+        <p class="error" id="connect-error" role="alert"></p>
+        <p class="state" id="connect-state"></p>
+      </section>
+
+      <!-- 3 ------------------------------------------------------------- -->
+      <section class="step is-locked" data-step="3">
+        <h2><span class="step__num">3</span> What to move, and where</h2>
+        <div class="field">
+          <label for="destination">Send everything to</label>
+          <input id="destination" placeholder="0x…" spellcheck="false" autocomplete="off" />
+          <p class="hint">
+            An address you control and can still sign for. Check every character — this cannot be
+            undone.
+          </p>
+        </div>
+
+        <div class="holdings" id="holdings"></div>
+
+        <details class="disclosure">
+          <summary>A token is missing</summary>
+          <div class="field">
+            <label for="manual-token">Token address</label>
+            <input id="manual-token" placeholder="0x…" spellcheck="false" autocomplete="off" />
+          </div>
+          <button class="button" id="add-token">Add it</button>
+          <p class="hint">
+            Discovery uses a public indexer, which can miss things. Balances are always read from
+            the chain, never from the indexer.
+          </p>
+        </details>
+
+        <p class="error" id="build-error" role="alert"></p>
+        <button class="button button--primary" id="review">Review the recovery</button>
+      </section>
+
+      <!-- 4 ------------------------------------------------------------- -->
+      <section class="step is-locked" data-step="4">
+        <h2><span class="step__num">4</span> Sign and submit</h2>
+        <div class="readout" id="review-readout"></div>
+        <p class="error" id="submit-error" role="alert"></p>
+        <div class="actions">
+          <button class="button button--primary" id="submit">Sign and submit</button>
+        </div>
+      </section>
+
+      <!-- Result --------------------------------------------------------- -->
+      <section class="step is-hidden" data-step="done">
+        <h2>Recovery submitted</h2>
+        <div class="readout" id="done-readout"></div>
+      </section>
+
+      <!-- Second visit ---------------------------------------------------- -->
+      <section class="step step--aside">
+        <h2>Finishing a recovery you started earlier</h2>
+        <p class="hint">
+          If the account had a waiting period, your recovery is queued rather than done. Come back
+          when the wait is over and finish it here. Anyone can complete it — it runs exactly what
+          was queued and nothing else.
+        </p>
+        <div class="tickets" id="tickets"></div>
+        <details class="disclosure">
+          <summary>Paste a saved recovery</summary>
+          <div class="field">
+            <label for="ticket-json">The JSON you copied</label>
+            <textarea id="ticket-json" rows="5" spellcheck="false"></textarea>
+          </div>
+          <button class="button" id="load-ticket">Load it</button>
+          <p class="error" id="ticket-error" role="alert"></p>
+        </details>
+      </section>
+
+      <footer class="foot">
+        <p>
+          This page holds no keys and never asks for a recovery phrase. Everything it shows is read
+          from the chain, and the transaction is signed by your own wallet, which will show you the
+          same details independently before you approve them.
+        </p>
+        <p class="foot__warn">
+          <strong>Check the address bar.</strong> A page that asks for your recovery phrase to
+          "restore" an account is a theft, always. This one will never ask.
+        </p>
+      </footer>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

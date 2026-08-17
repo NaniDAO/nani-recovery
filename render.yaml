@@ -1,0 +1,21 @@
+# Render static site — free tier, no server.
+#
+# The page is one HTML file with no backend: chain reads go to public RPCs from
+# the visitor's own browser, and the transaction is broadcast by their wallet.
+# Nothing needs to run here, which is the point — a recovery tool with a server
+# is a recovery tool that can be down.
+services:
+  - type: web
+    name: nani-recovery
+    runtime: static
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: ./dist
+    domains:
+      - recovery.nani.ooo
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
