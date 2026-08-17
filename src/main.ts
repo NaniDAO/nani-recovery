@@ -508,8 +508,25 @@ $<HTMLButtonElement>('review').addEventListener('click', () => {
 
 // MARK: - 4 · Sign and submit
 
+/**
+ * A signature already collected for the payload currently on screen.
+ *
+ * Submitting takes *two* wallet interactions — sign the typed data, then send
+ * the transaction carrying it — and the button's name promised one. A guardian
+ * who approved the signature and then lost the second prompt (dismissed,
+ * opened behind the window, or blocked by a wallet on the wrong chain) saw
+ * "User rejected the request" for a request they had just approved, and lost
+ * the signature along with it.
+ *
+ * Holding it means a failed *send* costs a retry, not another signature. The
+ * signature is the part with the guardian's authority in it; broadcasting is
+ * cheap, fallible, and worth retrying on its own.
+ */
+let signed: { signature: Hex; data: Hex; nonce: number } | null = null;
+
 $<HTMLButtonElement>('submit').addEventListener('click', async () => {
   const error = $<HTMLElement>('submit-error');
+  const state = $<HTMLElement>('submit-state');
   error.textContent = '';
   if (!prepared || !account || !vault || !guardian || !guardianProvider || !client) return;
 
@@ -519,19 +536,37 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
     // Typed data rather than a raw hash: the wallet renders target, value and
     // nonce itself, so the guardian compares what this page claims against what
     // their own wallet independently says it is signing.
-    const signature = (await guardianProvider.request({
-      method: 'eth_signTypedData_v4',
-      params: [guardian, JSON.stringify(typedData({
-        account, chainId: chain.id, target: account,
-        value: 0n, data: prepared.data, nonce: prepared.nonce,
-      }))],
-    })) as Hex;
+    if (!signed || signed.data !== prepared.data || signed.nonce !== prepared.nonce) {
+      state.textContent = 'Step 1 of 2 — approve the signature in your wallet. It may open in a separate window.';
+      const signature = (await guardianProvider.request({
+        method: 'eth_signTypedData_v4',
+        params: [guardian, JSON.stringify(typedData({
+          account, chainId: chain.id, target: account,
+          value: 0n, data: prepared.data, nonce: prepared.nonce,
+        }))],
+      })) as Hex;
+      signed = { signature, data: prepared.data, nonce: prepared.nonce };
+    }
 
-    const calldata = executeCalldata(account, prepared.data, signature);
+    // Checked here rather than left to the send. A wallet on the wrong chain
+    // fails somewhere inside `eth_sendTransaction`, and what surfaces is a
+    // generic rejection that says nothing about chains.
+    const walletChain = Number((await guardianProvider.request({ method: 'eth_chainId' })) as Hex);
+    if (walletChain !== chain.id) {
+      state.textContent = `Your wallet is on the wrong network — approve the switch to ${chain.name}.`;
+      await guardianProvider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${chain.id.toString(16)}` }],
+      });
+    }
+
+    state.textContent = 'Step 2 of 2 — signed. Now approve the transaction itself. This is a second, separate prompt.';
+    const calldata = executeCalldata(account, prepared.data, signed.signature);
     const txHash = (await guardianProvider.request({
       method: 'eth_sendTransaction',
       params: [{ from: guardian, to: account, data: calldata, value: '0x0' }],
     })) as Hex;
+    state.textContent = '';
 
     const eta = vault.delaySeconds > 0
       ? Math.floor(Date.now() / 1000) + vault.delaySeconds
@@ -562,7 +597,17 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
     renderTickets();
     step('done').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
-    error.textContent = (e as Error).message;
+    state.textContent = '';
+    const message = (e as Error)?.message ?? String(e);
+    if (signed) {
+      // Naming which of the two steps failed, because "User rejected the
+      // request" after approving a signature reads as the wallet lying.
+      error.textContent =
+        `Your signature was accepted and is saved — you do not need to sign again. Sending the transaction did not go through: ${message}`;
+      button.textContent = 'Retry sending';
+    } else {
+      error.textContent = message;
+    }
   } finally {
     button.disabled = false;
   }
