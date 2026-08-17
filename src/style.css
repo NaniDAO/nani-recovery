@@ -265,13 +265,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .banner--warn { background: var(--amber-soft); color: var(--amber); }
 .banner--bad { background: var(--alarm-soft); color: var(--alarm); }
 .banner--good { background: var(--accent-soft); color: var(--accent); }
-/* Neutral. The safety case is not a warning, and styling it amber would make
-   it read as one more thing to be nervous about. */
-.banner--calm { background: var(--paper); color: var(--ink-soft); border: 1px solid var(--rule); }
-.banner--calm strong { color: var(--ink); }
-.banner--calm ul { margin: 8px 0 0; padding-left: 18px; }
-.banner--calm li { margin: 4px 0; }
-
 /* ── Choice of path ───────────────────────────────────────────────── */
 
 .choice { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
