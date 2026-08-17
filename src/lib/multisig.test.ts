@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'vitest';
 import {
   IMPLEMENTATION,
+  SENTINEL,
   batchCalldata,
   domainSeparator,
   erc20Transfer,
   ethTransfer,
   identify,
+  previousOwner,
+  takeOverCalls,
   transactionHash,
   typedData,
 } from './multisig';
@@ -122,6 +125,57 @@ describe('sweep', () => {
     const call = ethTransfer('0x4444444444444444444444444444444444444444', 7n);
     expect(call.value).toBe(7n);
     expect(call.data).toBe('0x');
+  });
+});
+
+describe('taking the account over', () => {
+  // All-numeric so the EIP-55 checksum is trivially valid — viem rejects
+  // addresses whose casing doesn't match, which is worth knowing about.
+  const GUARDIAN = '0x3333333333333333333333333333333333333333' as const;
+  const LOST = '0x4444444444444444444444444444444444444444' as const;
+  const NEW = '0x5555555555555555555555555555555555555555' as const;
+
+  /// `removeOwner` takes the node *pointing at* the target, and the list head is
+  /// the sentinel rather than an owner.
+  test('walks the owner list from the sentinel', () => {
+    expect(previousOwner(GUARDIAN, [GUARDIAN, LOST])).toBe(SENTINEL);
+    expect(previousOwner(LOST, [GUARDIAN, LOST])).toBe(GUARDIAN);
+    expect(previousOwner(NEW, [GUARDIAN, LOST])).toBeNull();
+  });
+
+  /// The pointer has to be computed against the list as it will be *after* the
+  /// add, because `addOwner` prepends and shifts everything along. Using the
+  /// original order reverts, and it reverts on the second call — so the add
+  /// would appear to succeed and the removal would not.
+  test('accounts for addOwner prepending', () => {
+    const calls = takeOverCalls({
+      account: ACCOUNT, newOwner: NEW, lostOwner: LOST, owners: [GUARDIAN, LOST],
+    });
+    expect(calls).not.toBeNull();
+    expect(calls).toHaveLength(2);
+
+    // addOwner(NEW) then removeOwner(prev = GUARDIAN, LOST): after prepending,
+    // the list is [NEW, GUARDIAN, LOST], so LOST's predecessor is GUARDIAN.
+    expect(calls![0].data.toLowerCase()).toContain(NEW.slice(2).toLowerCase());
+    expect(calls![1].data.toLowerCase()).toContain(GUARDIAN.slice(2).toLowerCase());
+    expect(calls![1].data.toLowerCase()).toContain(LOST.slice(2).toLowerCase());
+  });
+
+  test('both calls target the account itself', () => {
+    // They are onlySelf, reached through `execute(target = account, …)`.
+    const calls = takeOverCalls({
+      account: ACCOUNT, newOwner: NEW, lostOwner: LOST, owners: [GUARDIAN, LOST],
+    })!;
+    for (const call of calls) {
+      expect(call.to).toBe(ACCOUNT);
+      expect(call.value).toBe(0n);
+    }
+  });
+
+  test('refuses when the lost owner is not an owner', () => {
+    expect(takeOverCalls({
+      account: ACCOUNT, newOwner: NEW, lostOwner: NEW, owners: [GUARDIAN, LOST],
+    })).toBeNull();
   });
 });
 

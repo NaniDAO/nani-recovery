@@ -30,6 +30,31 @@ per token.
 
 [ms]: https://github.com/z0r0z/multisig
 
+## Two ways back
+
+**Take over the account.** Add an address you control as an owner, remove the
+lost one. Nothing moves, so there is no per-asset gas, and nothing that points
+at the address is disturbed — an ENS or `.wei` name, an NFT's provenance, a
+staked or vested position, a contract that allowlisted you. The account keeps
+its identity and answers to a different key.
+
+`addOwner` and `removeOwner` are `onlySelf`, reached the same way the sweep
+reaches `batch`: through `execute` with `target` set to the account, so the
+inner call arrives with `msg.sender == address(this)`.
+
+The order matters. The new owner is added first, because `removeOwner` requires
+`ownerCount > threshold` — and the pointer for the removal is computed against
+the list *after* the add, since `addOwner` prepends and shifts everything along.
+Getting that wrong reverts on the second call, so the add appears to work and
+the removal doesn't.
+
+**Move everything out.** Send tokens, NFTs and ETH somewhere else. Slower,
+costlier, and it abandons the account — but it is the only option when someone
+else has the key. Taking over does nothing there: an account upgraded with
+EIP-7702 is still an EOA, and whoever holds that key can sign ordinary
+transactions from it no matter who owns the multisig. Owner rotation only
+governs `execute`.
+
 ## The waiting period
 
 If the account has one — and it should — `execute` **queues** rather than runs.

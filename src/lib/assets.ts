@@ -96,6 +96,48 @@ export async function findHoldings(
   return out;
 }
 
+export interface NFT {
+  collection: Address;
+  name: string;
+  tokenId: bigint;
+}
+
+/**
+ * NFTs the account holds, from the same keyless indexer.
+ *
+ * Unlike token balances there is nothing to re-verify cheaply — ownership is
+ * `ownerOf(tokenId)`, one call each, and a collection of two hundred would be
+ * two hundred round trips on a page someone is waiting at. So these are offered
+ * as candidates and the transfer simply reverts if one is wrong, which is the
+ * safe direction: a batch that fails moves nothing.
+ */
+export async function findNFTs(chainId: number, account: Address): Promise<NFT[]> {
+  const base = BLOCKSCOUT[chainId];
+  if (!base) return [];
+  try {
+    const response = await fetch(`${base}/api/v2/addresses/${account}/nft?type=ERC-721`);
+    if (!response.ok) return [];
+    const body = (await response.json()) as {
+      items?: { id?: string; token?: { address?: string; name?: string } }[];
+    };
+    return (body.items ?? [])
+      .filter((item) => item.id && item.token?.address)
+      .slice(0, 60)
+      .map((item) => ({
+        collection: item.token!.address as Address,
+        name: item.token!.name || 'NFT',
+        tokenId: BigInt(item.id!),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export function formatNFT(nft: NFT): string {
+  const id = nft.tokenId.toString();
+  return `${nft.name} #${id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id}`;
+}
+
 export function formatHolding(holding: Holding): string {
   return `${formatUnits(holding.balance, holding.decimals)} ${holding.symbol}`;
 }

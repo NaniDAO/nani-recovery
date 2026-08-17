@@ -57,30 +57,59 @@
 
       <!-- 3 ------------------------------------------------------------- -->
       <section class="step is-locked" data-step="3">
-        <h2><span class="step__num">3</span> What to move, and where</h2>
+        <h2><span class="step__num">3</span> How to recover it</h2>
+
+        <div class="choice">
+          <label class="option">
+            <input type="radio" name="mode" value="takeover" checked />
+            <span class="option__body">
+              <span class="option__title">Take over the account</span>
+              <span class="option__note">
+                Add an address you control as an owner, and remove the lost one. Nothing moves —
+                tokens, NFTs, staked positions and any name pointing here all stay exactly where
+                they are, and the account keeps its address.
+              </span>
+            </span>
+          </label>
+
+          <label class="option">
+            <input type="radio" name="mode" value="sweep" />
+            <span class="option__body">
+              <span class="option__title">Move everything out</span>
+              <span class="option__note">
+                Send the assets to another address. Slower and costlier, and it leaves the old
+                account behind — but it is the only option if someone else has the key.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div class="banner banner--warn" id="mode-note"></div>
+
         <div class="field">
-          <label for="destination">Send everything to</label>
+          <label for="destination" id="destination-label">New owner address</label>
           <input id="destination" placeholder="0x…" spellcheck="false" autocomplete="off" />
-          <p class="hint">
-            An address you control and can still sign for. Check every character — this cannot be
-            undone.
+          <p class="hint" id="destination-hint">
+            An address you control and can still sign for. Check every character.
           </p>
         </div>
 
-        <div class="holdings" id="holdings"></div>
+        <div class="sweep-only is-hidden" id="sweep-only">
+          <div class="holdings" id="holdings"></div>
 
-        <details class="disclosure">
-          <summary>A token is missing</summary>
-          <div class="field">
-            <label for="manual-token">Token address</label>
-            <input id="manual-token" placeholder="0x…" spellcheck="false" autocomplete="off" />
-          </div>
-          <button class="button" id="add-token">Add it</button>
-          <p class="hint">
-            Discovery uses a public indexer, which can miss things. Balances are always read from
-            the chain, never from the indexer.
-          </p>
-        </details>
+          <details class="disclosure">
+            <summary>A token is missing</summary>
+            <div class="field">
+              <label for="manual-token">Token address</label>
+              <input id="manual-token" placeholder="0x…" spellcheck="false" autocomplete="off" />
+            </div>
+            <button class="button" id="add-token">Add it</button>
+            <p class="hint">
+              Discovery uses a public indexer, which can miss things. Balances are always read from
+              the chain, never from the indexer.
+            </p>
+          </details>
+        </div>
 
         <p class="error" id="build-error" role="alert"></p>
         <button class="button button--primary" id="review">Review the recovery</button>
@@ -124,9 +153,7 @@
 
       <footer class="foot">
         <p>
-          There is no server here and nothing to sign up for. Everything on this page is read from
-          the chain, and the transaction is signed by your own wallet — which will show you the same
-          details independently before you approve them.
+          No server, no account. Everything here is read from the chain, and your own wallet signs.
         </p>
       </footer>
     </main>

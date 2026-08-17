@@ -18,6 +18,8 @@ import {
   executeCalldata,
   executeQueuedCalldata,
   identify,
+  nftTransfer,
+  takeOverCalls,
   readQueued,
   readVault,
   transactionHash,
@@ -26,7 +28,10 @@ import {
   type Chain,
   type VaultState,
 } from './lib/multisig';
-import { ETH_RESERVE, findHoldings, formatHolding, type Holding } from './lib/assets';
+import {
+  ETH_RESERVE, findHoldings, findNFTs, formatHolding, formatNFT,
+  type Holding, type NFT,
+} from './lib/assets';
 import {
   describeWait,
   forgetTicket,
@@ -58,11 +63,14 @@ let client: PublicClient | null = null;
 let holdings: Holding[] = [];
 let selected = new Set<string>();
 let manualTokens: Address[] = [];
+let nfts: NFT[] = [];
+let selectedNFTs = new Set<string>();
 let guardian: Address | null = null;
 let guardianProvider: Provider | null = null;
 let prepared: { calls: Call[]; data: Hex; hash: Hex; nonce: number; destination: Address } | null = null;
 
 const key = (h: Holding) => h.token ?? 'eth';
+const nftKey = (n: NFT) => `${n.collection}:${n.tokenId}`;
 
 function readClient(target: Chain): PublicClient {
   return createPublicClient({ transport: http(target.rpc) });
@@ -224,23 +232,60 @@ async function connect(option: WalletOption) {
 
     markDone('2');
     unlock('3');
-    void refreshHoldings();
+    syncMode();
   } catch (e) {
     error.textContent = (e as Error).message;
   }
 }
 
-// MARK: - 3 · What to move
+// MARK: - 3 · How to recover
+
+/**
+ * Which path the guardian is taking.
+ *
+ * Taking over is better whenever it is possible: nothing moves, so nothing that
+ * points at the account is disturbed and there is no per-asset gas. It only
+ * fails in one case, and it is the case worth naming out loud — an EIP-7702
+ * account whose key was *stolen* rather than lost is still an EOA, and whoever
+ * holds that key can sign ordinary transactions from it no matter who owns the
+ * multisig. Then the assets have to leave.
+ */
+function currentMode(): 'takeover' | 'sweep' {
+  const checked = document.querySelector<HTMLInputElement>('input[name="mode"]:checked');
+  return checked?.value === 'sweep' ? 'sweep' : 'takeover';
+}
+
+function syncMode() {
+  const sweep = currentMode() === 'sweep';
+  $<HTMLElement>('sweep-only').classList.toggle('is-hidden', !sweep);
+  $<HTMLElement>('destination-label').textContent = sweep ? 'Send everything to' : 'New owner address';
+  $<HTMLElement>('destination-hint').textContent = sweep
+    ? 'An address you control and can still sign for. This cannot be undone — check every character.'
+    : 'An address you control and can still sign for. It becomes an owner of this account; the lost one is removed.';
+  $<HTMLElement>('mode-note').innerHTML = sweep
+    ? 'Use this if someone else has the key. On an account upgraded in place, a stolen key can still send ordinary transactions no matter who owns the multisig — so the assets have to leave.'
+    : 'Right for a key that is lost rather than stolen. If someone else has the key, choose the other option: removing them as an owner does not stop them signing from the address.';
+  if (sweep && holdings.length === 0) void refreshHoldings();
+}
+
+document.querySelectorAll('input[name="mode"]').forEach((input) =>
+  input.addEventListener('change', syncMode));
+
+// MARK: - What to move
 
 async function refreshHoldings() {
   if (!client || !account) return;
   const container = $<HTMLElement>('holdings');
   container.innerHTML = '<p class="hint">Looking for assets…</p>';
 
-  holdings = await findHoldings(client, chain, account, manualTokens);
+  [holdings, nfts] = await Promise.all([
+    findHoldings(client, chain, account, manualTokens),
+    findNFTs(chain.id, account),
+  ]);
   selected = new Set(holdings.map(key));
+  selectedNFTs = new Set(nfts.map(nftKey));
 
-  if (holdings.length === 0) {
+  if (holdings.length === 0 && nfts.length === 0) {
     container.innerHTML = '<p class="hint">Nothing found on this chain. If you know a token is there, add it below.</p>';
     return;
   }
@@ -277,6 +322,29 @@ async function refreshHoldings() {
       }
       return label;
     }),
+    ...nfts.map((nft) => {
+      const label = document.createElement('label');
+      label.className = 'holding';
+
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = true;
+      box.addEventListener('change', () => {
+        if (box.checked) selectedNFTs.add(nftKey(nft));
+        else selectedNFTs.delete(nftKey(nft));
+      });
+
+      const name = document.createElement('span');
+      name.className = 'holding__amount';
+      name.textContent = formatNFT(nft);
+
+      const note = document.createElement('span');
+      note.className = 'holding__note';
+      note.textContent = 'NFT';
+
+      label.append(box, name, note);
+      return label;
+    }),
   );
 }
 
@@ -289,6 +357,33 @@ $<HTMLButtonElement>('add-token').addEventListener('click', () => {
   $<HTMLElement>('build-error').textContent = '';
   void refreshHoldings();
 });
+
+/**
+ * Tokens, then NFTs, then ETH last.
+ *
+ * A batch is atomic so order cannot change the outcome today. It is written this
+ * way because the reserve calculation depends on ETH being considered after
+ * everything else, and because if any of this is ever made non-atomic, the
+ * assets that are hardest to re-acquire should already have moved.
+ */
+function buildSweep(
+  chosen: Holding[], chosenNFTs: NFT[], from: Address, to: Address,
+): Call[] {
+  const calls: Call[] = [];
+  for (const holding of chosen) {
+    if (holding.token === null) continue;
+    calls.push(erc20Transfer(holding.token, to, holding.balance));
+  }
+  for (const nft of chosenNFTs) {
+    calls.push(nftTransfer(nft.collection, from, to, nft.tokenId));
+  }
+  const eth = chosen.find((h) => h.token === null);
+  if (eth) {
+    const sweepable = eth.balance > ETH_RESERVE ? eth.balance - ETH_RESERVE : 0n;
+    if (sweepable > 0n) calls.push(ethTransfer(to, sweepable));
+  }
+  return calls;
+}
 
 $<HTMLButtonElement>('review').addEventListener('click', () => {
   const error = $<HTMLElement>('build-error');
@@ -304,25 +399,47 @@ $<HTMLButtonElement>('review').addEventListener('click', () => {
     return;
   }
 
-  const chosen = holdings.filter((h) => selected.has(key(h)));
-  if (chosen.length === 0) { error.textContent = 'Select at least one asset to move.'; return; }
+  const mode = currentMode();
+  let calls: Call[];
+  let summary: string;
 
-  // Tokens first, ETH last. A batch is atomic so order cannot change the
-  // outcome, but if one leg is ever made non-atomic the valuable, harder-to-
-  // re-acquire assets should already have moved.
-  const calls: Call[] = [];
-  for (const holding of chosen) {
-    if (holding.token === null) continue;
-    calls.push(erc20Transfer(holding.token, destination, holding.balance));
-  }
-  const eth = chosen.find((h) => h.token === null);
-  if (eth) {
-    const sweepable = eth.balance > ETH_RESERVE ? eth.balance - ETH_RESERVE : 0n;
-    if (sweepable > 0n) calls.push(ethTransfer(destination, sweepable));
-  }
-  if (calls.length === 0) {
-    error.textContent = 'Nothing to move — the ETH balance is below the amount kept back for the next step.';
-    return;
+  if (mode === 'takeover') {
+    // The lost owner is whichever one is not the guardian. With more than two
+    // owners we cannot tell which was lost, so we ask rather than guess — a
+    // wrong removal is not recoverable by the same route.
+    const others = vault.owners.filter(
+      (o) => o.toLowerCase() !== guardian?.toLowerCase(),
+    );
+    if (others.length !== 1) {
+      error.textContent = others.length === 0
+        ? 'You are the only owner of this account, so there is nothing to take over.'
+        : `This account has ${others.length} other owners, so it isn't clear which key was lost. Use "move everything out" instead.`;
+      return;
+    }
+    const lost = others[0];
+    if (destination.toLowerCase() === lost.toLowerCase()) {
+      error.textContent = 'That is the address you are replacing.';
+      return;
+    }
+    const built = takeOverCalls({
+      account, newOwner: destination, lostOwner: lost, owners: vault.owners,
+    });
+    if (!built) { error.textContent = "Couldn't work out the owner list to change."; return; }
+    calls = built;
+    summary = `Add ${destination} as an owner, remove ${lost}`;
+  } else {
+    const chosen = holdings.filter((h) => selected.has(key(h)));
+    const chosenNFTs = nfts.filter((n) => selectedNFTs.has(nftKey(n)));
+    if (chosen.length === 0 && chosenNFTs.length === 0) {
+      error.textContent = 'Select at least one asset to move.';
+      return;
+    }
+    calls = buildSweep(chosen, chosenNFTs, account, destination);
+    if (calls.length === 0) {
+      error.textContent = 'Nothing to move — the ETH balance is below the amount kept back for the next step.';
+      return;
+    }
+    summary = [...chosen.map(formatHolding), ...chosenNFTs.map(formatNFT)].join('\n');
   }
 
   const data = batchCalldata(calls);
@@ -332,9 +449,9 @@ $<HTMLButtonElement>('review').addEventListener('click', () => {
   prepared = { calls, data, hash, nonce: vault.nonce, destination };
 
   $<HTMLElement>('review-readout').innerHTML =
-    row('From', account) +
-    row('To', destination) +
-    row('Moving', chosen.map(formatHolding).join('\n'), true) +
+    row('Account', account) +
+    row(mode === 'takeover' ? 'New owner' : 'To', destination) +
+    row(mode === 'takeover' ? 'Change' : 'Moving', summary, true) +
     row('Chain', chain.name, true) +
     row('Nonce', String(vault.nonce), true) +
     row('Digest', hash) +

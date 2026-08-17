@@ -142,6 +142,29 @@ export interface Call {
 }
 
 const ERC20 = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
+const ERC721 = parseAbi(['function safeTransferFrom(address from, address to, uint256 tokenId)']);
+const OWNERS = parseAbi([
+  'function addOwner(address owner) payable',
+  'function removeOwner(address prevOwner, address owner) payable',
+]);
+
+/** Head and tail of the owner linked list — `address(1)`. */
+export const SENTINEL = '0x0000000000000000000000000000000000000001' as Address;
+
+/**
+ * The node pointing at `owner`, which `removeOwner` takes rather than the owner
+ * itself.
+ *
+ * The list runs `SENTINEL -> owners[0] -> … -> SENTINEL`, so the predecessor of
+ * the first entry is the sentinel. Note the order is not sorted: `init` inserts
+ * ascending but `addOwner` prepends, so a guardian added later sits at the head.
+ * A stale list gives a wrong pointer and the call reverts.
+ */
+export function previousOwner(owner: Address, owners: Address[]): Address | null {
+  const index = owners.findIndex((o) => o.toLowerCase() === owner.toLowerCase());
+  if (index === -1) return null;
+  return index === 0 ? SENTINEL : owners[index - 1];
+}
 
 export function erc20Transfer(token: Address, to: Address, amount: bigint): Call {
   return { to: token, value: 0n, data: encodeFunctionData({ abi: ERC20, functionName: 'transfer', args: [to, amount] }) };
@@ -149,6 +172,67 @@ export function erc20Transfer(token: Address, to: Address, amount: bigint): Call
 
 export function ethTransfer(to: Address, amount: bigint): Call {
   return { to, value: amount, data: '0x' };
+}
+
+export function nftTransfer(
+  collection: Address, from: Address, to: Address, tokenId: bigint,
+): Call {
+  return {
+    to: collection,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: ERC721, functionName: 'safeTransferFrom', args: [from, to, tokenId],
+    }),
+  };
+}
+
+/**
+ * Hand the account to a new key instead of emptying it.
+ *
+ * The better recovery when the key is *lost* rather than stolen. Nothing moves,
+ * so there is no per-token gas, no slippage, and no disturbing anything that
+ * points at the address — an ENS or `.wei` name, an NFT with provenance, a
+ * staked or vested position, a contract that allowlisted you. The account keeps
+ * its identity and simply answers to a different owner.
+ *
+ * `addOwner` and `removeOwner` are `onlySelf`, so they are reached the same way
+ * the sweep reaches `batch`: through `execute` with `target` set to the account,
+ * which makes the inner call arrive with `msg.sender == address(this)`.
+ *
+ * The old owner is removed *after* the new one is added — `removeOwner` requires
+ * `ownerCount > threshold`, so doing it the other way round can leave the list
+ * too short and revert.
+ *
+ * This does **not** help against a stolen key on an EIP-7702 account. That
+ * address is still an EOA and whoever holds the key can sign ordinary
+ * transactions from it; owner rotation only governs `execute`.
+ */
+export function takeOverCalls(params: {
+  account: Address; newOwner: Address; lostOwner: Address; owners: Address[];
+}): Call[] | null {
+  const prev = previousOwner(params.lostOwner, params.owners);
+  if (!prev) return null;
+
+  const calls: Call[] = [{
+    to: params.account,
+    value: 0n,
+    data: encodeFunctionData({ abi: OWNERS, functionName: 'addOwner', args: [params.newOwner] }),
+  }];
+
+  // `addOwner` prepends, so the new owner becomes the head and the old list
+  // shifts one along — the pointer for the lost owner has to account for that.
+  const afterAdd = [params.newOwner, ...params.owners];
+  const prevAfterAdd = previousOwner(params.lostOwner, afterAdd);
+  if (!prevAfterAdd) return null;
+
+  calls.push({
+    to: params.account,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: OWNERS, functionName: 'removeOwner', args: [prevAfterAdd, params.lostOwner],
+    }),
+  });
+  return calls;
 }
 
 /**

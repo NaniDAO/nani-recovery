@@ -262,6 +262,33 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .banner--bad { background: var(--alarm-soft); color: var(--alarm); }
 .banner--good { background: var(--accent-soft); color: var(--accent); }
 
+/* ── Choice of path ───────────────────────────────────────────────── */
+
+.choice { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
+
+.option {
+  display: flex;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.option input { width: auto; margin: 3px 0 0; flex: none; }
+.option__body { display: flex; flex-direction: column; gap: 3px; }
+.option__title { font-weight: 600; font-size: 14px; }
+.option__note { font-size: 13px; color: var(--ink-soft); }
+
+.option:has(input:checked) .option__note { color: var(--ink); }
+
+.sweep-only.is-hidden { display: none; }
+
 /* ── Holdings ─────────────────────────────────────────────────────── */
 
 .holdings { margin: 14px 0; }
