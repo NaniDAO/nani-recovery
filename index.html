@@ -49,6 +49,27 @@
           The wallet you connect must be an owner of that account. Its signature is what authorises
           the recovery, and it pays the gas.
         </p>
+        <!-- A page asking a stressed stranger to connect a wallet is shaped
+             exactly like a drainer, and looking trustworthy is the one thing a
+             drainer is good at. So this states what can be checked rather than
+             asking to be believed. It sits here, at the click, and not in the
+             footer where the same claim was going unread. -->
+        <div class="banner banner--calm">
+          <strong>Connecting shows this page your address. That is all it can do.</strong>
+          <ul>
+            <li>Nothing moves without a signature, and you will see the exact
+              transaction — target, calldata, and what it does — before you approve it.</li>
+            <li>This page will never ask for a recovery phrase or a private key.
+              Nothing legitimate ever will. If any page does, close it.</li>
+            <li>Check your address bar reads <strong>recovery.nani.ooo</strong>.
+              Copies of this page are cheap to make and this is the only thing
+              that distinguishes them.</li>
+            <li>No server and no accounts: it is one static file that reads the
+              chain from your browser. Your browser is told to refuse every other
+              connection, so it cannot report back even if it wanted to.
+              <a href="https://github.com/NaniDAO/nani-recovery">Read the source</a>.</li>
+          </ul>
+        </div>
         <button class="button" id="connect">Connect wallet</button>
         <div class="picker is-hidden" id="wallet-picker"></div>
         <p class="error" id="connect-error" role="alert"></p>
@@ -154,6 +175,7 @@
       <footer class="foot">
         <p>
           No server, no account. Everything here is read from the chain, and your own wallet signs.
+          <a href="https://github.com/NaniDAO/nani-recovery">Source</a>.
         </p>
       </footer>
     </main>

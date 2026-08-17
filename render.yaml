@@ -19,3 +19,37 @@ services:
       - path: /*
         name: Referrer-Policy
         value: no-referrer
+      # The page claims it talks to nothing but public chain endpoints. This is
+      # what makes that a fact the browser enforces rather than a promise the
+      # reader has to take on trust — which matters more here than almost
+      # anywhere, because a recovery page asking a stranger to connect a wallet
+      # is shaped exactly like the thing it must not be mistaken for.
+      #
+      # Set here rather than in a <meta> tag so `pnpm dev` keeps working —
+      # Vite's HMR injects inline scripts that a strict script-src would kill.
+      #
+      # `unsafe-inline` for script and style is forced by vite-plugin-singlefile,
+      # which inlines both into the one HTML file — a deliberate trade, since a
+      # single file is what makes this page easy to archive, diff and serve from
+      # anywhere. Hashing the inline script instead would pin the CSP to one
+      # build and rot on the next release.
+      #
+      # The directive doing the real work here is `connect-src`. Whatever else
+      # goes wrong on this page, it can only speak to public chain endpoints:
+      # no beacon, no analytics, nowhere to send an address or a signature.
+      # `default-src 'none'` closes every channel not named.
+      - path: /*
+        name: Content-Security-Policy
+        value: >-
+          default-src 'none';
+          script-src 'unsafe-inline';
+          style-src 'unsafe-inline';
+          img-src 'self' data:;
+          font-src 'self';
+          connect-src https://*.publicnode.com https://*.blockscout.com;
+          form-action 'none';
+          base-uri 'none';
+          frame-ancestors 'none'
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
