@@ -209,6 +209,9 @@ describe('tickets', () => {
     expect(describeWait(now - 10, now)).toBe('ready now');
     expect(describeWait(now + 86_400 * 2 + 3_600 * 3, now)).toBe('2d 3h');
     expect(describeWait(now + 3_600 * 5, now)).toBe('5h 0m');
-    expect(describeWait(now + 120, now)).toBe('2m');
+    // Seconds appear once it is close enough for them to matter, so a page
+    // left open in the last minute visibly keeps counting.
+    expect(describeWait(now + 120, now)).toBe('2m 00s');
+    expect(describeWait(now + 45, now)).toBe('45s');
   });
 });

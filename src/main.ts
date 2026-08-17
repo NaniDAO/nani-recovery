@@ -34,6 +34,7 @@ import {
 } from './lib/assets';
 import {
   describeWait,
+  describeWhen,
   forgetTicket,
   importTicket,
   loadTickets,
@@ -456,8 +457,11 @@ $<HTMLButtonElement>('review').addEventListener('click', () => {
     row('Nonce', String(vault.nonce), true) +
     row('Digest', hash) +
     (vault.delaySeconds > 0
-      ? `<div class="banner banner--warn">Signing queues this recovery. It becomes executable in about ${Math.round(vault.delaySeconds / 86_400 * 10) / 10} days, and you finish it from this page.</div>`
-      : `<div class="banner banner--good">This account has no waiting period, so it executes as soon as the transaction confirms.</div>`);
+      ? `<div class="banner banner--warn"><strong>This will be queued, not executed.</strong>
+           The account has a ${escape(describeWait(Math.floor(Date.now() / 1000) + vault.delaySeconds))} waiting period, so nothing moves until
+           <strong>${escape(describeWhen(Math.floor(Date.now() / 1000) + vault.delaySeconds))}</strong>.
+           Come back here then and finish it — and save the file you'll be given, in case you return on another machine.</div>`
+      : `<div class="banner banner--good">This account has no waiting period, so it runs as soon as the transaction confirms.</div>`);
 
   markDone('3');
   unlock('4');
@@ -507,6 +511,7 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
       createdAt: Math.floor(Date.now() / 1000),
     };
     saveTicket(ticket);
+    void refreshTicketState();
 
     step('done').classList.remove('is-hidden');
     $<HTMLElement>('done-readout').innerHTML =
@@ -527,6 +532,35 @@ $<HTMLButtonElement>('submit').addEventListener('click', async () => {
 
 // MARK: - Finishing a queued recovery
 
+/**
+ * Chain state per saved recovery, keyed by digest.
+ *
+ * The stored `eta` is what we computed at signing time from the delay we read
+ * then. `queued(hash)` is what the contract actually holds — and it is the only
+ * thing that knows whether the recovery is still standing. A ticket can be
+ * cancelled by whoever holds the account key, or already completed by anyone,
+ * and in both cases local storage would go on cheerfully counting down toward a
+ * button that reverts.
+ */
+const chainETA = new Map<string, bigint | null>();
+
+async function refreshTicketState() {
+  const tickets = loadTickets();
+  await Promise.all(tickets.map(async (ticket) => {
+    const ticketChain = chainByID(ticket.chainId);
+    if (!ticketChain) return;
+    try {
+      const eta = await readQueued(readClient(ticketChain), ticket.account, ticket.hash);
+      chainETA.set(ticket.hash, eta);
+    } catch {
+      // Leave it unknown rather than claiming it is gone — an RPC hiccup must
+      // not look like a cancelled recovery.
+      chainETA.set(ticket.hash, null);
+    }
+  }));
+  renderTickets();
+}
+
 function renderTickets() {
   const container = $<HTMLElement>('tickets');
   const tickets = loadTickets();
@@ -534,15 +568,32 @@ function renderTickets() {
 
   for (const ticket of tickets) {
     const ticketChain = chainByID(ticket.chainId);
+    const known = chainETA.get(ticket.hash);
+    // Prefer the chain's ETA over the one we stored.
+    const eta = known != null && known > 0n ? Number(known) : ticket.eta;
+    const gone = known === 0n;
+    const ready = !gone && (eta === 0 || eta <= Math.floor(Date.now() / 1000));
+
     const card = document.createElement('div');
     card.className = 'ticket';
-    const ready = ticket.eta === 0 || ticket.eta <= Math.floor(Date.now() / 1000);
+
+    let status: string;
+    if (gone) {
+      status = '<span class="banner banner--bad">No longer queued. It was either completed already, or cancelled by whoever holds the account key.</span>';
+    } else if (known === undefined) {
+      status = '<span class="ticket__wait">checking…</span>';
+    } else if (ready) {
+      status = '<span class="ticket__wait is-ready">ready now</span>';
+    } else {
+      status = `<span class="ticket__wait" data-eta="${eta}">${escape(describeWait(eta))}</span>`
+        + `<span class="ticket__when">${escape(describeWhen(eta))}</span>`;
+    }
 
     card.innerHTML =
       row('Account', ticket.account) +
       row('To', ticket.destination) +
       row('Chain', ticketChain?.name ?? String(ticket.chainId), true) +
-      `<div class="row"><dt>Executable</dt><dd class="plain"><span class="ticket__wait${ready ? ' is-ready' : ''}">${escape(describeWait(ticket.eta))}</span></dd></div>`;
+      `<div class="row"><dt>Executable</dt><dd class="plain">${status}</dd></div>`;
 
     const actions = document.createElement('div');
     actions.className = 'actions';
@@ -555,7 +606,7 @@ function renderTickets() {
 
     const drop = document.createElement('button');
     drop.className = 'button';
-    drop.textContent = 'Forget';
+    drop.textContent = gone ? 'Remove' : 'Forget';
     drop.addEventListener('click', () => { forgetTicket(ticket.hash); renderTickets(); });
 
     actions.append(finish, drop);
@@ -563,6 +614,25 @@ function renderTickets() {
     container.append(card);
   }
 }
+
+/**
+ * Tick the countdowns in place.
+ *
+ * Only the text nodes carrying an `eta`, so the rest of the card — and any
+ * button focus — survives. Re-rendering the whole list every second would fight
+ * the user for the pointer.
+ */
+setInterval(() => {
+  const now = Math.floor(Date.now() / 1000);
+  let anyBecameReady = false;
+  document.querySelectorAll<HTMLElement>('.ticket__wait[data-eta]').forEach((node) => {
+    const eta = Number(node.dataset.eta);
+    if (eta <= now) { anyBecameReady = true; return; }
+    node.textContent = describeWait(eta, now);
+  });
+  // Crossing the line changes what the buttons do, so that one needs a redraw.
+  if (anyBecameReady) renderTickets();
+}, 1000);
 
 async function finishTicket(ticket: RecoveryTicket) {
   const error = $<HTMLElement>('ticket-error');
@@ -628,7 +698,8 @@ $<HTMLButtonElement>('load-ticket').addEventListener('click', () => {
 
   error.textContent = '';
   saveTicket(ticket);
-  renderTickets();
+  void refreshTicketState();
 });
 
 renderTickets();
+void refreshTicketState();

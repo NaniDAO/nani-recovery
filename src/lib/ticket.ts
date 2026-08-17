@@ -86,6 +86,14 @@ export function importTicket(text: string): RecoveryTicket | null {
   }
 }
 
+/**
+ * How long until it can be run.
+ *
+ * Gets finer as it gets closer: days and hours from a distance, seconds in the
+ * last minute. Someone watching a two-day wait does not need the seconds, and
+ * someone in the last thirty of them very much does — a static "1m" gives no
+ * sign the page is still alive.
+ */
 export function describeWait(eta: number, now = Math.floor(Date.now() / 1000)): string {
   if (eta === 0) return 'ready';
   const remaining = eta - now;
@@ -93,7 +101,17 @@ export function describeWait(eta: number, now = Math.floor(Date.now() / 1000)): 
   const days = Math.floor(remaining / 86_400);
   const hours = Math.floor((remaining % 86_400) / 3_600);
   const minutes = Math.floor((remaining % 3_600) / 60);
+  const seconds = remaining % 60;
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
+}
+
+/** The same wait as an absolute moment, which is what people actually diarise. */
+export function describeWhen(eta: number): string {
+  if (eta === 0) return '';
+  return new Date(eta * 1000).toLocaleString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
 }
