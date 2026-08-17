@@ -47,13 +47,11 @@ trusting it.
 its time has passed, so anyone can complete a recovery — the arguments *are* the
 authorisation.
 
-## What it will never do
+## What it doesn't touch
 
-Ask for a recovery phrase or a private key. Nothing here can use one, and a page
-that asks is a theft. Check the address bar.
-
-There is no server and no backend. Chain reads go to public RPCs from your
-browser; your wallet broadcasts. Nothing is logged anywhere.
+Keys. There is no server and no backend: chain reads go to public RPCs from your
+browser, and your wallet broadcasts. Nothing is stored anywhere but your own
+browser, and only the recovery payload.
 
 ## Running it
 
