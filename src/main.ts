@@ -226,32 +226,48 @@ $<HTMLButtonElement>('look-up').addEventListener('click', async () => {
 
 // MARK: - 2 · Connect the guardian
 
+/**
+ * EIP-6963 discovery, kept in-house.
+ *
+ * `mipd` is the maintained version of this and it was tempting, but it is a
+ * 0.0.x package with no release since March 2024, and widening the dependency
+ * surface of a recovery page to save fifteen lines is the wrong trade — the
+ * more so on the page whose pitch is that it is one auditable file.
+ *
+ * The line worth drawing isn't hand-rolled vs library, it's whether being wrong
+ * is silent. Serialising EIP-712 by hand yields a valid signature over the
+ * wrong digest, which nothing surfaces, so viem does that. Getting discovery
+ * wrong yields "no wallet found" — loud, harmless, and obvious in a second.
+ */
 const discovered = new Map<string, WalletOption>();
+
+/** Set while the picker is open, so a late announcement redraws it. */
+let onProviderFound: (() => void) | null = null;
+
 window.addEventListener('eip6963:announceProvider', (event) => {
   const detail = (event as CustomEvent).detail as {
     info: { uuid: string; name: string; icon: string }; provider: Provider;
   };
-  if (detail?.info?.uuid) {
-    discovered.set(detail.info.uuid, { ...detail.info, provider: detail.provider });
-  }
+  if (!detail?.info?.uuid) return;
+  const isNew = !discovered.has(detail.info.uuid);
+  discovered.set(detail.info.uuid, { ...detail.info, provider: detail.provider });
+  // Wallets answer `requestProvider` synchronously in practice, which is what
+  // let a click dispatch the request and read the results in the same tick. It
+  // is not what the EIP promises, and a wallet that answers a microtask later
+  // would simply be missing from the list with no sign it had been dropped.
+  if (isNew) onProviderFound?.();
 });
 window.dispatchEvent(new Event('eip6963:requestProvider'));
 
-$<HTMLButtonElement>('connect').addEventListener('click', () => {
-  window.dispatchEvent(new Event('eip6963:requestProvider'));
+/** Draw the discovered wallets into the picker. Returns how many there were. */
+function renderPicker(): number {
   const picker = $<HTMLElement>('wallet-picker');
   const options = [...discovered.values()];
   if (options.length === 0 && window.ethereum) {
     options.push({ uuid: 'injected', name: 'Browser wallet', icon: '', provider: window.ethereum });
   }
+
   picker.replaceChildren();
-
-  if (options.length === 0) {
-    $<HTMLElement>('connect-error').textContent =
-      'No wallet found in this browser. Open this page in one that has the guardian wallet installed.';
-    return;
-  }
-
   for (const option of options) {
     const item = document.createElement('button');
     item.className = 'picker__item';
@@ -266,7 +282,31 @@ $<HTMLButtonElement>('connect').addEventListener('click', () => {
     item.addEventListener('click', () => void connect(option));
     picker.append(item);
   }
-  picker.classList.toggle('is-hidden');
+  return options.length;
+}
+
+$<HTMLButtonElement>('connect').addEventListener('click', () => {
+  const picker = $<HTMLElement>('wallet-picker');
+
+  // Second press closes it.
+  if (!picker.classList.contains('is-hidden')) {
+    picker.classList.add('is-hidden');
+    onProviderFound = null;
+    return;
+  }
+
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+  if (renderPicker() === 0) {
+    $<HTMLElement>('connect-error').textContent =
+      'No wallet found in this browser. Open this page in one that has the guardian wallet installed.';
+    return;
+  }
+
+  $<HTMLElement>('connect-error').textContent = '';
+  picker.classList.remove('is-hidden');
+  // A wallet announcing late redraws the open list — it must not re-run the
+  // click handler, which would read as a second press and close the picker.
+  onProviderFound = () => { if (renderPicker() > 0) picker.classList.remove('is-hidden'); };
 });
 
 async function connect(option: WalletOption) {
@@ -274,6 +314,7 @@ async function connect(option: WalletOption) {
   const state = $<HTMLElement>('connect-state');
   error.textContent = '';
   $<HTMLElement>('wallet-picker').classList.add('is-hidden');
+  onProviderFound = null;
 
   try {
     const wallet = createWalletClient({ transport: custom(option.provider) });
