@@ -256,10 +256,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .row dd.plain { font-family: var(--sans); }
 
 .banner {
+  /* Emitted as a <span> from four places in main.ts, because these land inside
+     <p class="state"> / <p class="error"> and a <div> there is invalid nesting.
+     An inline box drops vertical margin, lets its padding overflow instead of
+     growing the line, and repaints its background per line-box — so a banner
+     long enough to wrap rendered as a staircase of coloured fragments with the
+     text bleeding out. Only the one carrying a 42-character address wrapped,
+     which is why this looked like one broken message rather than a broken rule. */
+  display: block;
   padding: 11px 13px;
   border-radius: 8px;
   font-size: 14px;
   margin-top: 12px;
+  /* Addresses have no break opportunities and are wider than the card. */
+  overflow-wrap: break-word;
 }
 
 .banner--warn { background: var(--amber-soft); color: var(--amber); }
